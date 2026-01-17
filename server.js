@@ -3,43 +3,45 @@ const http = require('http');
 const WebSocket = require('ws');
 const path = require('path');
 
+// --- CONFIGURACIÓN ---
 const app = express();
-// Servir la carpeta 'public' (asegúrate de que index.html está ahí)
+// Servimos la carpeta 'public' donde estará el index.html
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Creamos el servidor HTTP (necesario para Render)
 const server = http.createServer(app);
+
+// Creamos el servidor WebSocket montado sobre el HTTP
 const wss = new WebSocket.Server({ server });
 
-console.log(`🚀 SERVIDOR V7 (BROADCAST) ARRANCANDO...`);
+console.log(`🚀 SERVIDOR V8 (BROADCAST TOTAL) ARRANCANDO...`);
 
 wss.on('connection', function connection(ws, req) {
-  const ip = req.socket.remoteAddress;
-  console.log(`[+] NUEVO CLIENTE CONECTADO (${ip}). Total: ${wss.clients.size}`);
+  // Loguear nueva conexión (útil para ver si el ESP32 conecta y desconecta)
+  const ip = req.socket.remoteAddress; 
+  console.log(`[+] Conexión entrante: ${ip} | Total Clientes: ${wss.clients.size}`);
 
   ws.on('message', function incoming(message) {
     const msgString = message.toString();
-    console.log(`[MSG RECIBIDO] >> ${msgString}`);
+    console.log(`[MSG] >> ${msgString}`);
     
-    // --- ESTA ES LA PARTE QUE FALLABA ---
-    let enviados = 0;
+    // --- LÓGICA DE REBOTE (BROADCAST) ---
+    // Enviamos el mensaje a TODOS los conectados (Navegador y ESP32)
+    // Así confirmamos que el servidor está vivo.
     wss.clients.forEach(function each(client) {
-      // Enviamos a todos MENOS al que lo envió (para no hacer eco al ESP32)
-      // O si quieres ver eco en el ESP32, quita el "client !== ws"
-      if (client !== ws && client.readyState === WebSocket.OPEN) {
+      if (client.readyState === WebSocket.OPEN) {
         client.send(msgString);
-        enviados++;
       }
     });
-    console.log(`   ↳ Rebotado a ${enviados} clientes web.`);
-    // ------------------------------------
   });
 
   ws.on('close', () => {
-    console.log(`[-] Cliente desconectado. Restantes: ${wss.clients.size}`);
+    console.log(`[-] Cliente desconectado. Quedan: ${wss.clients.size}`);
   });
 });
 
+// Render nos da el puerto en process.env.PORT, si no usamos 3000
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`✅ Escuchando en puerto ${PORT}`);
+  console.log(`✅ Servidor web y socket escuchando en puerto ${PORT}`);
 });
