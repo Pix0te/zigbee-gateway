@@ -2,94 +2,163 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Pixote Zigbee Monitor</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zigbee Gateway V8</title>
     <style>
-        body { background: #111; color: #0f0; font-family: 'Courier New', monospace; padding: 20px; }
-        #log { border: 1px solid #333; padding: 10px; height: 400px; overflow-y: scroll; background: #000; }
-        .card { border: 1px solid #0f0; padding: 10px; margin: 10px 0; border-radius: 5px; background: #001a00; }
-        h1 { color: #fff; }
-        .btn { padding: 10px 20px; background: #333; color: white; border: 1px solid #555; cursor: pointer; }
-        .btn:hover { background: #555; }
+        body { 
+            background-color: #0d1117; 
+            color: #c9d1d9; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 0; padding: 20px;
+        }
+        h1 { border-bottom: 1px solid #30363d; padding-bottom: 10px; }
+        
+        /* Panel de Estado */
+        .status-bar { 
+            padding: 15px; margin-bottom: 20px; border-radius: 6px; 
+            background: #161b22; border: 1px solid #30363d; font-weight: bold;
+        }
+        .online { color: #2ea043; }
+        .offline { color: #da3633; }
+
+        /* Botones */
+        .btn { 
+            background: #238636; color: white; border: none; padding: 10px 20px; 
+            border-radius: 6px; cursor: pointer; font-size: 16px; 
+        }
+        .btn:hover { background: #2ea043; }
+        .btn-clear { background: #30363d; }
+
+        /* Tarjetas de Dispositivos */
+        #devices-container { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+        .card { 
+            background: #161b22; border: 1px solid #2ea043; 
+            padding: 15px; border-radius: 6px; width: 200px;
+            box-shadow: 0 3px 6px rgba(0,0,0,0.3);
+        }
+        .card h3 { margin: 0 0 10px 0; color: #2ea043; }
+
+        /* Log de Texto (Consola) */
+        #console { 
+            background: #000; color: #0f0; font-family: monospace; 
+            height: 300px; overflow-y: auto; padding: 10px; 
+            border: 1px solid #30363d; margin-top: 20px; border-radius: 6px;
+        }
+        .log-entry { border-bottom: 1px solid #222; padding: 2px 0; }
+        .tx { color: #3fb950; } /* Enviado */
+        .rx { color: #58a6ff; } /* Recibido */
     </style>
 </head>
 <body>
-    <h1>?? Monitor Zigbee en Vivo</h1>
-    <p>Estado: <span id="status" style="color:red">DESCONECTADO</span></p>
-    
-    <button class="btn" onclick="sendCommand('SCAN')">?? ESCANEAR RED</button>
-    <button class="btn" onclick="clearLog()">??? LIMPIAR LOG</button>
 
-    <div id="devices"></div>
-    <h3>Consola de Tráfico:</h3>
-    <div id="log"></div>
+    <h1>📡 Panel de Control Zigbee</h1>
+
+    <div class="status-bar">
+        Estado del Socket: <span id="connection-status" class="offline">DESCONECTADO</span>
+    </div>
+
+    <button class="btn" onclick="enviarComando('SCAN')">🔍 ACTIVAR ESCANEO</button>
+    <button class="btn btn-clear" onclick="limpiarLog()">🗑️ Limpiar Log</button>
+
+    <div id="devices-container"></div>
+
+    <h3>📜 Registro de Tráfico (Raw Data)</h3>
+    <div id="console"></div>
 
     <script>
-        // Detectar si estamos en HTTPS o HTTP para usar wss:// o ws://
+        // 1. Detectar si estamos en local o en Render (HTTPS requiere WSS)
         const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
         const wsUrl = protocol + window.location.host;
         
         let socket;
+        const statusSpan = document.getElementById('connection-status');
+        const consoleDiv = document.getElementById('console');
+        const devicesDiv = document.getElementById('devices-container');
 
         function connect() {
-            console.log("Intentando conectar a: " + wsUrl);
+            log("Intentando conectar a: " + wsUrl, "sys");
             socket = new WebSocket(wsUrl);
 
             socket.onopen = () => {
-                document.getElementById('status').innerText = "CONECTADO (ONLINE)";
-                document.getElementById('status').style.color = "#0f0";
-                log("? Sistema conectado al servidor.");
+                statusSpan.innerText = "ONLINE (CONECTADO)";
+                statusSpan.className = "online";
+                log("✅ Conexión establecida con el servidor.", "sys");
             };
 
             socket.onmessage = (event) => {
                 const raw = event.data;
-                log("?? RECIBIDO: " + raw);
+                log("⬇️ RX: " + raw, "rx");
 
+                // Intentar entender el mensaje
                 try {
                     const data = JSON.parse(raw);
                     
-                    // Si es un nuevo dispositivo, creamos tarjeta
+                    // Si es un dispositivo nuevo o mensaje Zigbee, dibujamos tarjeta
                     if (data.type === 'NEW_DEVICE' || data.type === 'ZIGBEE_MSG') {
-                        drawDevice(data.addr);
+                        drawCard(data);
                     }
                 } catch (e) {
-                    console.error("No es JSON válido", e);
+                    // No es JSON, no pasa nada
                 }
             };
 
             socket.onclose = () => {
-                document.getElementById('status').innerText = "DESCONECTADO - Reintentando...";
-                document.getElementById('status').style.color = "red";
-                setTimeout(connect, 2000);
+                statusSpan.innerText = "OFFLINE - Reintentando en 3s...";
+                statusSpan.className = "offline";
+                log("❌ Conexión perdida. Reconectando...", "sys");
+                setTimeout(connect, 3000);
+            };
+
+            socket.onerror = (err) => {
+                log("⚠️ Error de Socket. Revisa la consola F12.", "sys");
+                console.error(err);
             };
         }
 
-        function sendCommand(cmdType) {
-            const msg = JSON.stringify({ cmd: cmdType });
-            socket.send(msg);
-            log("?? ENVIADO: " + msg);
+        function enviarComando(cmd) {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                const msg = JSON.stringify({ cmd: cmd });
+                socket.send(msg);
+                log("⬆️ TX: " + msg, "tx");
+            } else {
+                alert("No estás conectado al servidor.");
+            }
         }
 
-        function drawDevice(addr) {
-            if (document.getElementById('dev-' + addr)) return; // Ya existe
-            
-            const box = document.createElement('div');
-            box.id = 'dev-' + addr;
-            box.className = 'card';
-            box.innerHTML = `<h3>?? Dispositivo Zigbee</h3><p>Dirección: <b>${addr}</b></p>`;
-            document.getElementById('devices').appendChild(box);
-            log("? ¡Nueva tarjeta creada para " + addr + "!");
+        function drawCard(data) {
+            const id = 'card-' + data.addr;
+            let card = document.getElementById(id);
+
+            // Si no existe, la creamos
+            if (!card) {
+                card = document.createElement('div');
+                card.id = id;
+                card.className = 'card';
+                card.innerHTML = `<h3>👾 Sensor</h3><p>ID: <b>${data.addr}</b></p><p id="val-${data.addr}">Esperando datos...</p>`;
+                devicesDiv.appendChild(card);
+                log("✨ ¡Nueva tarjeta creada!", "sys");
+            }
+
+            // Si trae valor, actualizamos
+            if (data.val !== undefined) {
+                document.getElementById(`val-${data.addr}`).innerText = "Valor: " + data.val;
+                // Efecto visual de parpadeo
+                card.style.borderColor = "#fff";
+                setTimeout(() => card.style.borderColor = "#2ea043", 200);
+            }
         }
 
-        function log(text) {
-            const div = document.getElementById('log');
+        function log(text, type) {
             const entry = document.createElement('div');
+            entry.className = 'log-entry ' + type;
             const time = new Date().toLocaleTimeString();
             entry.innerText = `[${time}] ${text}`;
-            div.prepend(entry); // Lo más nuevo arriba
+            consoleDiv.prepend(entry);
         }
-        
-        function clearLog() { document.getElementById('log').innerHTML = ''; }
 
+        function limpiarLog() { consoleDiv.innerHTML = ''; }
+
+        // Iniciar conexión al cargar
         connect();
     </script>
 </body>
